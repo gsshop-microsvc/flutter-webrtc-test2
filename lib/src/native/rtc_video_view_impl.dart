@@ -1,9 +1,8 @@
 import 'dart:math';
-
 import 'package:flutter/material.dart';
-
-import 'package:webrtc_interface/webrtc_interface.dart';
-
+import '../interface/enums.dart';
+import '../interface/rtc_video_renderer.dart';
+import '../rtc_video_renderer.dart';
 import 'rtc_video_renderer_impl.dart';
 
 class RTCVideoView extends StatelessWidget {
@@ -13,15 +12,17 @@ class RTCVideoView extends StatelessWidget {
     this.objectFit = RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
     this.mirror = false,
     this.filterQuality = FilterQuality.low,
+    this.fit,
   }) : super(key: key);
 
   final RTCVideoRenderer _renderer;
   final RTCVideoViewObjectFit objectFit;
+  final BoxFit? fit;
   final bool mirror;
   final FilterQuality filterQuality;
 
-  RTCVideoRenderer get videoRenderer => _renderer;
-
+  RTCVideoRendererNative get videoRenderer =>
+      _renderer.delegate as RTCVideoRendererNative;
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -36,9 +37,10 @@ class RTCVideoView extends StatelessWidget {
         height: constraints.maxHeight,
         child: FittedBox(
           clipBehavior: Clip.hardEdge,
-          fit: objectFit == RTCVideoViewObjectFit.RTCVideoViewObjectFitContain
-              ? BoxFit.contain
-              : BoxFit.cover,
+          fit: fit ??
+              (objectFit == RTCVideoViewObjectFit.RTCVideoViewObjectFitContain
+                  ? BoxFit.contain
+                  : BoxFit.cover),
           child: Center(
             child: ValueListenableBuilder<RTCVideoValue>(
               valueListenable: videoRenderer,

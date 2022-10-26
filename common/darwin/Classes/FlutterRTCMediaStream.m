@@ -647,7 +647,8 @@ typedef void (^NavigatorUserMediaSuccessCallback)(RTCMediaStream *mediaStream);
 
 -(void)mediaStreamTrackSetEnabled:(RTCMediaStreamTrack *)track : (BOOL)enabled
 {
-  if (track && track.isEnabled != enabled) {
+  // Set always
+  if (track) {
     track.isEnabled = enabled;
   }
 }
