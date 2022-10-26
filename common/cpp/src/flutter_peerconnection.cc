@@ -227,7 +227,7 @@ void FlutterPeerConnection::CreateRTCPeerConnection(
       base_->factory_->Create(base_->configuration_, constraints);
   base_->peerconnections_[uuid] = pc;
 
-  std::string event_channel = "FlutterWebRTC/peerConnectoinEvent" + uuid;
+  std::string event_channel = "FlutterWebRTC/peerConnectionEvent" + uuid;
 
   std::unique_ptr<FlutterPeerConnectionObserver> observer(
       new FlutterPeerConnectionObserver(base_, pc, base_->messenger_,
@@ -255,6 +255,9 @@ void FlutterPeerConnection::RTCPeerConnectionDispose(
   auto it = base_->peerconnection_observers_.find(uuid);
   if (it != base_->peerconnection_observers_.end())
     base_->peerconnection_observers_.erase(it);
+  auto it2 = base_->peerconnections_.find(uuid);
+  if (it2 != base_->peerconnections_.end())
+    base_->peerconnections_.erase(it2);
   result->Success();
 }
 
@@ -556,7 +559,9 @@ void FlutterPeerConnection::RtpSenderReplaceTrack(
     result_ptr->Error("rtpSenderDispose", "sender is null");
     return;
   }
-  // TODO RtpSenderReplaceTrack
+
+  sender->set_track(track);
+
   result_ptr->Success();
 }
 
@@ -737,11 +742,128 @@ void FlutterPeerConnection::AddIceCandidate(
   result->Success();
 }
 
+
+
+EncodableMap statsToMap(const scoped_refptr<MediaRTCStats>& stats) {
+  EncodableMap report_map;
+  report_map[EncodableValue("id")] = EncodableValue(stats->id().std_string());
+  report_map[EncodableValue("type")] = EncodableValue(stats->type().std_string());
+  report_map[EncodableValue("timestamp")] =
+      EncodableValue(stats->timestamp_us());
+  EncodableMap values;
+  auto members = stats->Members();
+  for (int i = 0; i < members.size(); i++) {
+    auto member = members[i];
+    if(!member->IsDefined()) {
+      continue;
+    }
+    switch (member->GetType())
+    {
+    case RTCStatsMember::Type::kBool:
+      values[EncodableValue(member->GetName().std_string())] =
+          EncodableValue(member->ValueBool());
+      break;
+    case RTCStatsMember::Type::kInt32:
+      values[EncodableValue(member->GetName().std_string())] =
+          EncodableValue(member->ValueInt32());
+      break;
+    case RTCStatsMember::Type::kUint32:
+      values[EncodableValue(member->GetName().std_string())] =
+          EncodableValue((int64_t)member->ValueUint32());
+      break;
+    case RTCStatsMember::Type::kInt64:
+      values[EncodableValue(member->GetName().std_string())] =
+          EncodableValue(member->ValueInt64());
+      break;
+    case RTCStatsMember::Type::kUint64:
+      values[EncodableValue(member->GetName().std_string())] =
+          EncodableValue((int64_t)member->ValueUint64());
+      break;
+    case RTCStatsMember::Type::kDouble:
+      values[EncodableValue(member->GetName().std_string())] =
+          EncodableValue(member->ValueDouble());
+      break;
+    case RTCStatsMember::Type::kString:
+      values[EncodableValue(member->GetName().std_string())] =
+          EncodableValue(member->ValueString().std_string());
+      break;
+    default:
+      break;
+    }
+  }
+  report_map[EncodableValue("values")] = EncodableValue(values);
+  return report_map;
+}
+
 void FlutterPeerConnection::GetStats(
     const std::string& track_id,
     RTCPeerConnection* pc,
     std::unique_ptr<MethodResult<EncodableValue>> result) {
-  // TODO
+  std::shared_ptr<MethodResult<EncodableValue>> result_ptr(result.release());
+  scoped_refptr<RTCMediaTrack> track = base_->MediaTracksForId(track_id);
+  if (track != nullptr) {
+    bool found = false;
+    auto receivers = pc->receivers();
+    for (auto receiver : receivers.std_vector()) {
+      if (receiver->track()->id().c_string() == track_id) {
+        found = true;
+        pc->GetStats(
+            receiver,
+            [result_ptr](const vector<scoped_refptr<MediaRTCStats>> reports) {
+              EncodableList list;
+              for (int i = 0; i < reports.size(); i++) {
+                list.push_back(statsToMap(reports[i]));
+              }
+              EncodableMap params;
+              params[EncodableValue("stats")] = list;
+              result_ptr->Success(EncodableValue(params));
+            },
+            [result_ptr](const char* error) {
+              result_ptr->Error("GetStats", error);
+            });
+        return;
+      }
+    }
+    auto senders = pc->senders();
+    for (auto sender : senders.std_vector()) {
+      if (sender->track()->id().c_string() == track_id) {
+        found = true;
+        EncodableList list;
+        pc->GetStats(
+            sender,
+            [result_ptr](const vector<scoped_refptr<MediaRTCStats>> reports) {
+              EncodableList list;
+              for (int i = 0; i < reports.size(); i++) {
+                list.push_back(statsToMap(reports[i]));
+              }
+              EncodableMap params;
+              params[EncodableValue("stats")] = list;
+              result_ptr->Success(EncodableValue(params));
+            },
+            [result_ptr](const char* error) {
+              result_ptr->Error("GetStats", error);
+            });
+        return;
+      }
+    }
+    if(!found) {
+      result_ptr->Error("GetStats", "Track not found");
+    }
+  } else {
+    pc->GetStats(
+        [result_ptr](const vector<scoped_refptr<MediaRTCStats>> reports) {
+        EncodableList list;
+        for (int i = 0; i < reports.size(); i++) {
+          list.push_back(statsToMap(reports[i]));
+        }
+        EncodableMap params;
+        params[EncodableValue("stats")] = list;
+        result_ptr->Success(EncodableValue(params));
+      },
+        [result_ptr](const char* error) {
+          result_ptr->Error("GetStats", error);
+      });
+  }
 }
 
 void FlutterPeerConnection::MediaStreamAddTrack(
@@ -898,11 +1020,41 @@ static const char* signalingStateString(RTCSignalingState state) {
   }
   return "";
 }
+
 void FlutterPeerConnectionObserver::OnSignalingState(RTCSignalingState state) {
   if (event_sink_ != nullptr) {
     EncodableMap params;
     params[EncodableValue("event")] = "signalingState";
     params[EncodableValue("state")] = signalingStateString(state);
+    event_sink_->Success(EncodableValue(params));
+  }
+}
+
+
+static const char *peerConnectionStateString(RTCPeerConnectionState state) {
+  switch (state) {
+    case RTCPeerConnectionStateNew:
+      return "new";
+    case RTCPeerConnectionStateConnecting:
+      return "connecting";
+    case RTCPeerConnectionStateConnected:
+      return "connected";
+    case RTCPeerConnectionStateDisconnected:
+      return "disconnected";
+    case RTCPeerConnectionStateFailed:
+      return "failed";
+    case RTCPeerConnectionStateClosed:
+      return "closed";
+  }
+  return "";
+}
+
+
+void FlutterPeerConnectionObserver::OnPeerConnectionState(RTCPeerConnectionState state) {
+  if (event_sink_ != nullptr) {
+    EncodableMap params;
+    params[EncodableValue("event")] = "peerConnectionState";
+    params[EncodableValue("state")] = peerConnectionStateString(state);
     event_sink_->Success(EncodableValue(params));
   }
 }
@@ -1058,11 +1210,13 @@ void FlutterPeerConnectionObserver::OnTrack(
 
 void FlutterPeerConnectionObserver::OnRemoveTrack(
     scoped_refptr<RTCRtpReceiver> receiver) {
+    auto track = receiver->track();
   if (event_sink_ != nullptr) {
     EncodableMap params;
     params[EncodableValue("event")] = "onRemoveTrack";
+    params[EncodableValue("trackId")] = EncodableValue(track->id().std_string());
+    params[EncodableValue("track")] = EncodableValue(mediaTrackToMap(track));
     params[EncodableValue("receiver")] = EncodableValue(rtpReceiverToMap(receiver));
-
     event_sink_->Success(EncodableValue(params));
   }
 }
@@ -1093,29 +1247,17 @@ void FlutterPeerConnectionObserver::OnDataChannel(
     scoped_refptr<RTCDataChannel> data_channel) {
 
   int channel_id = data_channel->id();
-
-  base_->lock();
-  if (base_->data_channel_observers_.find(channel_id) !=
-      base_->data_channel_observers_.end()) {
-    for(int i = 1024; i < 65535; i++){
-      if(base_->data_channel_observers_.find(i) ==
-      base_->data_channel_observers_.end()){
-        channel_id = i;
-        break;
-      }
-    }
-  }
-   base_->unlock();
+  std::string channel_uuid = base_->GenerateUUID();
 
   std::string event_channel =
-      "FlutterWebRTC/dataChannelEvent" + id_ + std::to_string(channel_id);
+      "FlutterWebRTC/dataChannelEvent" + id_ + channel_uuid;
 
   std::unique_ptr<FlutterRTCDataChannelObserver> observer(
       new FlutterRTCDataChannelObserver(data_channel, base_->messenger_,
                                         event_channel));
 
   base_->lock();
-  base_->data_channel_observers_[channel_id] = std::move(observer);
+  base_->data_channel_observers_[channel_uuid] = std::move(observer);
   base_->unlock();
 
   if (event_sink_) {
@@ -1123,6 +1265,7 @@ void FlutterPeerConnectionObserver::OnDataChannel(
     params[EncodableValue("event")] = "didOpenDataChannel";
     params[EncodableValue("id")] = EncodableValue(channel_id);
     params[EncodableValue("label")] = EncodableValue(data_channel->label().std_string());
+    params[EncodableValue("flutterId")] = EncodableValue(channel_uuid);
     event_sink_->Success(EncodableValue(params));
   }
 }
@@ -1141,6 +1284,26 @@ scoped_refptr<RTCMediaStream> FlutterPeerConnectionObserver::MediaStreamForId(
   if (it != remote_streams_.end())
     return (*it).second;
   return nullptr;
+}
+
+scoped_refptr<RTCMediaTrack> FlutterPeerConnectionObserver::MediaTrackForId(const std::string& id) {
+    for (auto it = remote_streams_.begin(); it != remote_streams_.end(); it++)
+    {
+        auto remoteStream = (*it).second;
+        auto audio_tracks = remoteStream->audio_tracks();
+        for (auto track : audio_tracks.std_vector()) {
+            if (track->id().std_string() == id) {
+                return track;
+            }
+        }
+        auto video_tracks = remoteStream->video_tracks();
+        for (auto track : video_tracks.std_vector()) {
+            if (track->id().std_string() == id) {
+                return track;
+            }
+        }
+    }
+    return nullptr;
 }
 
 void FlutterPeerConnectionObserver::RemoveStreamForId(const std::string& id) {

@@ -41,7 +41,7 @@
     objc_setAssociatedObject(self, @selector(eventChannel), eventChannel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-- (NSMutableDictionary<NSNumber *, RTCDataChannel *> *)dataChannels
+- (NSMutableDictionary<NSString *, RTCDataChannel *> *)dataChannels
 {
     return objc_getAssociatedObject(self, _cmd);
 }
@@ -184,9 +184,9 @@
     [peerConnection.remoteTracks removeAllObjects];
 
     // Clean up peerConnection's dataChannels.
-    NSMutableDictionary<NSNumber *, RTCDataChannel *> *dataChannels
+    NSMutableDictionary<NSString *, RTCDataChannel *> *dataChannels
     = peerConnection.dataChannels;
-    for (NSNumber *dataChannelId in dataChannels) {
+    for (NSString *dataChannelId in dataChannels) {
         dataChannels[dataChannelId].delegate = nil;
         // There is no need to close the RTCDataChannel because it is owned by the
         // RTCPeerConnection and the latter will close the former.
@@ -194,36 +194,71 @@
     [dataChannels removeAllObjects];
 }
 
--(void) peerConnectionGetStats:(nonnull NSString *)trackID
-                peerConnection:(nonnull RTCPeerConnection *)peerConnection
-                        result:(nonnull FlutterResult)result
-{
-    RTCMediaStreamTrack *track = nil;
-    if (!trackID
-        || !trackID.length
-        || (track = self.localTracks[trackID])
-        || (track = peerConnection.remoteTracks[trackID])) {
-        [peerConnection statsForTrack:track
-                     statsOutputLevel:RTCStatsOutputLevelStandard
-                    completionHandler:^(NSArray<RTCLegacyStatsReport *> *reports) {
+-(void) peerConnectionGetStatsForTrackId:(nonnull NSString *)trackID
+            peerConnection:(nonnull RTCPeerConnection *)peerConnection
+                    result:(nonnull FlutterResult)result {
+    RTCRtpSender *sender = nil;
+    RTCRtpReceiver *receiver = nil;
+    
+    for(RTCRtpSender *s in peerConnection.senders) {
+        if(s.track != nil && [s.track.trackId isEqualToString:trackID]) {
+            sender = s;
+        }
+    }
+    
+    for(RTCRtpReceiver *r in peerConnection.receivers) {
+        if(r.track != nil && [r.track.trackId isEqualToString:trackID]) {
+            receiver = r;
+        }
+    }
 
+    if (sender != nil) {
+        [peerConnection statisticsForSender:sender completionHandler:^(RTCStatisticsReport *statsReport) {
                         NSMutableArray *stats = [NSMutableArray array];
-
-                        for (RTCLegacyStatsReport *report in reports) {
-                            [stats addObject:@{@"id": report.reportId,
+                        for(id key in statsReport.statistics) {
+                            RTCStatistics *report = [statsReport.statistics objectForKey:key];
+                            [stats addObject:@{@"id": report.id,
                                                @"type": report.type,
-                                               @"timestamp": @(report.timestamp),
+                                               @"timestamp": @(report.timestamp_us),
                                                @"values": report.values
                                                }];
                         }
-
                         result(@{@"stats": stats});
                     }];
-    }else{
+    } else if (receiver != nil) {
+        [peerConnection statisticsForReceiver:receiver completionHandler:^(RTCStatisticsReport *statsReport) {
+                        NSMutableArray *stats = [NSMutableArray array];
+                        for(id key in statsReport.statistics) {
+                            RTCStatistics *report = [statsReport.statistics objectForKey:key];
+                            [stats addObject:@{@"id": report.id,
+                                               @"type": report.type,
+                                               @"timestamp": @(report.timestamp_us),
+                                               @"values": report.values
+                                               }];
+                        }
+                        result(@{@"stats": stats});
+                    }];
+    } else {
         result([FlutterError errorWithCode:@"GetStatsFailed"
                                    message:[NSString stringWithFormat:@"Error %@", @""]
                                    details:nil]);
     }
+}
+
+-(void) peerConnectionGetStats:(nonnull RTCPeerConnection *)peerConnection
+                        result:(nonnull FlutterResult)result {
+    [peerConnection statisticsWithCompletionHandler:^(RTCStatisticsReport *statsReport) {
+                    NSMutableArray *stats = [NSMutableArray array];
+                    for(id key in statsReport.statistics) {
+                        RTCStatistics *report = [statsReport.statistics objectForKey:key];
+                        [stats addObject:@{@"id": report.id,
+                                           @"type": report.type,
+                                           @"timestamp": @(report.timestamp_us),
+                                           @"values": report.values
+                                           }];
+                    }
+                    result(@{@"stats": stats});
+                }];
 }
 
 - (NSString *)stringForICEConnectionState:(RTCIceConnectionState)state {
@@ -412,7 +447,7 @@
     peerConnection.remoteStreams[streamId] = stream;
 
     if (hasAudio) {
-        [AudioUtils ensureAudioSessionWithRecording:NO];
+        [self ensureAudioSession];
     }
 
     FlutterEventSink eventSink = peerConnection.eventSink;
@@ -493,27 +528,33 @@
         return;
     }
 
+    NSString *flutterChannelId = [[NSUUID UUID] UUIDString];
     NSNumber *dataChannelId = [NSNumber numberWithInteger:dataChannel.channelId];
     dataChannel.peerConnectionId = peerConnection.flutterId;
     dataChannel.delegate = self;
-    peerConnection.dataChannels[dataChannelId] = dataChannel;
+    peerConnection.dataChannels[flutterChannelId] = dataChannel;
 
     FlutterEventChannel *eventChannel = [FlutterEventChannel
-                                         eventChannelWithName:[NSString stringWithFormat:@"FlutterWebRTC/dataChannelEvent%1$@%2$d", peerConnection.flutterId, dataChannel.channelId]
+                                         eventChannelWithName:[NSString stringWithFormat:@"FlutterWebRTC/dataChannelEvent%1$@%2$@", peerConnection.flutterId, flutterChannelId]
                                          binaryMessenger:self.messenger];
 
     dataChannel.eventChannel = eventChannel;
-    dataChannel.flutterChannelId = dataChannelId;
-    [eventChannel setStreamHandler:dataChannel];
+    dataChannel.flutterChannelId = flutterChannelId;
+    dataChannel.eventQueue = nil;
 
-    FlutterEventSink eventSink = peerConnection.eventSink;
-    if(eventSink){
-        eventSink(@{
-                    @"event" : @"didOpenDataChannel",
-                    @"id": dataChannelId,
-                    @"label": dataChannel.label
-                    });
-    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+       // setStreamHandler on main thread
+       [eventChannel setStreamHandler:dataChannel];
+       FlutterEventSink eventSink = peerConnection.eventSink;
+       if(eventSink){
+           eventSink(@{
+                       @"event" : @"didOpenDataChannel",
+                       @"id": dataChannelId,
+                       @"label": dataChannel.label,
+                       @"flutterId": flutterChannelId
+                       });
+       }
+    });
 }
 
 /** Called any time the PeerConnectionState changes. */
@@ -566,7 +607,7 @@ didStartReceivingOnTransceiver:(RTCRtpTransceiver *)transceiver {
         }
 
         if ([rtpReceiver.track.kind isEqualToString:@"audio"]) {
-            [AudioUtils ensureAudioSessionWithRecording:NO];
+            [self ensureAudioSession];
         }
         eventSink(event);
     }
@@ -604,6 +645,8 @@ didStartReceivingOnTransceiver:(RTCRtpTransceiver *)transceiver {
                   });
     }
 }
+
+-(void)peerConnection:(RTCPeerConnection*)peerConnection didRemoveIceCandidates:(NSArray<RTCIceCandidate*>*)candidates {}
 
 @end
 

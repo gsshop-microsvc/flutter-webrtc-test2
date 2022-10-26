@@ -1,7 +1,5 @@
 import 'dart:math';
-
 import 'package:flutter/material.dart';
-
 import '../interface/enums.dart';
 import '../interface/rtc_video_renderer.dart';
 import '../rtc_video_renderer.dart';
@@ -25,7 +23,6 @@ class RTCVideoView extends StatelessWidget {
 
   RTCVideoRendererNative get videoRenderer =>
       _renderer.delegate as RTCVideoRendererNative;
-
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(

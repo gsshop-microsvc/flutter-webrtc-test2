@@ -1,7 +1,13 @@
-@interface AudioUtils : NSObject
+#if TARGET_OS_IPHONE
 
+#import <WebRTC/WebRTC.h>
+
+@interface AudioUtils : NSObject
 + (void)ensureAudioSessionWithRecording:(BOOL)recording;
 // needed for wired headphones to use headphone mic
-+ (void)setPreferHeadphoneInput;
-
++ (BOOL)selectAudioInput:(AVAudioSessionPort)type;
++ (void)setSpeakerphoneOn:(BOOL)enable;
++ (void)deactiveRtcAudioSession;
 @end
+
+#endif

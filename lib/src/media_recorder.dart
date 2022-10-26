@@ -1,12 +1,10 @@
-import '../flutter_webrtc.dart';
-import 'interface/enums.dart';
-import 'interface/media_recorder.dart' as _interface;
-import 'interface/media_stream.dart';
-import 'interface/media_stream_track.dart';
+import 'package:webrtc_interface/webrtc_interface.dart' as rtc;
 
-class MediaRecorder extends _interface.MediaRecorder {
+import '../flutter_webrtc.dart';
+
+class MediaRecorder extends rtc.MediaRecorder {
   MediaRecorder() : _delegate = mediaRecorder();
-  final _interface.MediaRecorder _delegate;
+  final rtc.MediaRecorder _delegate;
 
   @override
   Future<void> start(String path,

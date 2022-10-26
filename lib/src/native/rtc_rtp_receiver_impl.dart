@@ -1,9 +1,7 @@
 import 'package:flutter/services.dart';
 
-import '../interface/media_stream_track.dart';
-import '../interface/rtc_rtp_parameters.dart';
-import '../interface/rtc_rtp_receiver.dart';
-import '../interface/rtc_stats_report.dart';
+import 'package:webrtc_interface/webrtc_interface.dart';
+
 import 'media_stream_track_impl.dart';
 import 'utils.dart';
 
@@ -37,10 +35,10 @@ class RTCRtpReceiverNative extends RTCRtpReceiver {
       var stats = <StatsReport>[];
       if (response != null) {
         List<dynamic> reports = response['stats'];
-        reports.forEach((report) {
+        for (var report in reports) {
           stats.add(StatsReport(report['id'], report['type'],
               report['timestamp'], report['values']));
-        });
+        }
       }
       return stats;
     } on PlatformException catch (e) {

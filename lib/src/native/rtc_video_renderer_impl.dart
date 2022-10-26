@@ -1,20 +1,25 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'package:webrtc_interface/webrtc_interface.dart';
+
 import '../helper.dart';
-import '../interface/media_stream.dart';
-import '../interface/rtc_video_renderer.dart';
 import 'utils.dart';
 
-class RTCVideoRendererNative extends VideoRenderer {
-  RTCVideoRendererNative();
+class RTCVideoRenderer extends ValueNotifier<RTCVideoValue>
+    implements VideoRenderer {
+  RTCVideoRenderer() : super(RTCVideoValue.empty);
   int? _textureId;
   MediaStream? _srcObject;
   StreamSubscription<dynamic>? _eventSubscription;
 
   @override
   Future<void> initialize() async {
+    if (_textureId != null) {
+      return;
+    }
     final response = await WebRTC.invokeMethod('createVideoRenderer', {});
     _textureId = response['textureId'];
     _eventSubscription = EventChannel('FlutterWebRTC/Texture$textureId')
@@ -35,6 +40,12 @@ class RTCVideoRendererNative extends VideoRenderer {
   MediaStream? get srcObject => _srcObject;
 
   @override
+  Function? onResize;
+
+  @override
+  Function? onFirstFrameRendered;
+
+  @override
   set srcObject(MediaStream? stream) {
     if (textureId == null) throw 'Call initialize before setting the stream';
 
@@ -50,14 +61,32 @@ class RTCVideoRendererNative extends VideoRenderer {
     });
   }
 
+  void setSrcObject({MediaStream? stream, String? trackId}) {
+    if (textureId == null) throw 'Call initialize before setting the stream';
+
+    _srcObject = stream;
+    WebRTC.invokeMethod('videoRendererSetSrcObject', <String, dynamic>{
+      'textureId': textureId,
+      'streamId': stream?.id ?? '',
+      'ownerTag': stream?.ownerTag ?? '',
+      'trackId': trackId ?? '0'
+    }).then((_) {
+      value = (stream == null)
+          ? RTCVideoValue.empty
+          : value.copyWith(renderVideo: renderVideo);
+    });
+  }
+
   @override
   Future<void> dispose() async {
     await _eventSubscription?.cancel();
-    await WebRTC.invokeMethod(
-      'videoRendererDispose',
-      <String, dynamic>{'textureId': _textureId},
-    );
-
+    _eventSubscription = null;
+    if (_textureId != null) {
+      await WebRTC.invokeMethod('videoRendererDispose', <String, dynamic>{
+        'textureId': _textureId,
+      });
+      _textureId = null;
+    }
     return super.dispose();
   }
 
@@ -78,6 +107,7 @@ class RTCVideoRendererNative extends VideoRenderer {
         break;
       case 'didFirstFrameRendered':
         value = value.copyWith(renderVideo: renderVideo);
+        onFirstFrameRendered?.call();
         break;
     }
   }
@@ -111,8 +141,13 @@ class RTCVideoRendererNative extends VideoRenderer {
   }
 
   @override
-  Future<bool> audioOutput(String deviceId) {
-    // TODO(cloudwebrtc): related to https://github.com/flutter-webrtc/flutter-webrtc/issues/395
-    throw UnimplementedError('This is not implement yet');
+  Future<bool> audioOutput(String deviceId) async {
+    try {
+      await Helper.selectAudioOutput(deviceId);
+    } catch (e) {
+      print('Helper.selectAudioOutput ${e.toString()}');
+      return false;
+    }
+    return true;
   }
 }
