@@ -24,7 +24,7 @@ public final class AudioTrackInterceptor extends AudioTrack {
     public AudioTrackInterceptor(@NonNull AudioTrack originalTrack, @NonNull SamplesReadyCallback callback) {
         // That just random params, we don't care about object that will be created
         super(
-            AudioManager.STREAM_MUSIC,
+            AudioManager.STREAM_SYSTEM,
             44200,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
