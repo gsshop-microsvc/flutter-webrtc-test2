@@ -163,7 +163,7 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
             .createAudioDeviceModule();
 
     getUserMediaImpl.audioDeviceModule = (JavaAudioDeviceModule) audioDeviceModule;
-
+    LOG.d('audioDeviceModule ==',audioDeviceModule);
     mFactory = PeerConnectionFactory.builder()
             .setOptions(new Options())
             .setVideoEncoderFactory(new SimulcastVideoEncoderFactoryWrapper(eglContext, true, true))
