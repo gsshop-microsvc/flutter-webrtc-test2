@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:webrtc_interface/webrtc_interface.dart';
 
@@ -79,6 +80,7 @@ class MediaStreamNative extends MediaStream {
 
   @override
   List<MediaStreamTrack> getAudioTracks() {
+    print('_audioTracks === $_audioTracks');
     return _audioTracks;
   }
 
